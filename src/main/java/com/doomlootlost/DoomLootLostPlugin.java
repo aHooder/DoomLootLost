@@ -1,26 +1,18 @@
 package com.doomlootlost;
 
+import com.doomlootlost.data.RiskedLootRecord;
 import com.doomlootlost.localstorage.LTItemEntry;
 import com.doomlootlost.localstorage.LootLostWriter;
-import com.doomlootlost.localstorage.LTRecord;
 import com.doomlootlost.ui.LootLoggerPanel;
-import com.doomlootlost.data.RiskedLootRecord;
 import com.google.inject.Provides;
 import java.awt.image.BufferedImage;
-import java.text.NumberFormat;
-import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
 import lombok.Getter;
@@ -29,15 +21,13 @@ import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.ItemComposition;
+import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
-import net.runelite.api.events.ActorDeath;
-import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.events.MenuOptionClicked;
+import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.widgets.Widget;
-import net.runelite.api.widgets.ComponentID;
-import net.runelite.api.widgets.InterfaceID;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.config.RuneScapeProfileType;
@@ -51,7 +41,6 @@ import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.util.ImageUtil;
 import net.runelite.client.util.Text;
-// Removed ArrayUtils import - no longer needed since we're not tracking general loot
 
 @Slf4j
 @PluginDescriptor(
@@ -60,13 +49,9 @@ import net.runelite.client.util.Text;
 public class DoomLootLostPlugin extends Plugin
 {
 	private static final String DOOM_BOSS_NAME = "Doom of Mokhaiotl";
-	private static final Pattern KILL_COUNT_PATTERN = Pattern.compile("Your (.*) kill count is:? ([0-9,]*).");
 	private static final Pattern DEATH_PATTERN = Pattern.compile("You have been defeated by (.*)!");
 	private static final Pattern WAVE_COMPLETE_PATTERN = Pattern.compile("Wave (\\d+) complete!");
 	private static final Pattern LOOT_CHOICE_PATTERN = Pattern.compile("(Claim|Risk) your loot");
-	private static final NumberFormat NUMBER_FORMATTER = NumberFormat.getNumberInstance(Locale.US);
-
-	// Removed SESSION_NAME constant - no longer needed since we're not tracking general loot
 
 	@Inject
 	private Client client;
@@ -95,10 +80,7 @@ public class DoomLootLostPlugin extends Plugin
 	private LootLoggerPanel panel;
 	private NavigationButton navButton;
 
-	// Removed lootNames field - no longer needed since we're not tracking general loot
-
-
-	private final Map<String, Integer> killCountMap = new HashMap<>();
+	@Getter
 	private int doomDeaths = 0;
 	private boolean inDoomInstance = false;
 
@@ -108,7 +90,7 @@ public class DoomLootLostPlugin extends Plugin
 	private boolean hasUnclaimedLoot = false;
 	private int currentWave = 0;
 	private long riskedLootValue = 0L;
-	
+
 	// Claim tracking system to prevent re-tracking until new boss encounter
 	private boolean lootClaimed = false; // Track if loot has been claimed - don't track while true
 
@@ -118,8 +100,8 @@ public class DoomLootLostPlugin extends Plugin
 	private static final long INSTANCE_TIMEOUT = 300000L; // 5 minutes in milliseconds
 
 	// Statistics
-	private int totalRiskedLoots = 0;
 	private int lootLostToDeaths = 0;
+	@Getter
 	private long totalLootValueLost = 0L;
 
 	@Provides
@@ -135,18 +117,18 @@ public class DoomLootLostPlugin extends Plugin
 		doomDeaths = config.doomDeaths();
 		lootLostToDeaths = config.lootLostToDeaths();
 		totalLootValueLost = config.totalLootValueLost();
-		
+
 		// Set up writer username FIRST (needed for data loading)
 		if (client.getGameState().equals(GameState.LOGGED_IN) || client.getGameState().equals(GameState.LOADING))
 		{
 			updateWriterUsername();
 		}
-		
+
 		// Load historical risked loot data AFTER writer is set up
 		loadHistoricalRiskedLootData();
-		
+
 		// Log loaded data
-		log.info("Plugin startup complete - Deaths: {}, Lost loot count: {}, Total value lost: {}", 
+		log.info("Plugin startup complete - Deaths: {}, Lost loot count: {}, Total value lost: {}",
 			doomDeaths, lootLostToDeaths, totalLootValueLost);
 		log.info("Loaded {} historical risked loot records", riskedLootHistory.size());
 
@@ -166,7 +148,7 @@ public class DoomLootLostPlugin extends Plugin
 		{
 			clientToolbar.addNavigation(navButton);
 		}
-		
+
 		// Refresh UI to ensure data is displayed
 		if (config.enableUI())
 		{
@@ -184,26 +166,23 @@ public class DoomLootLostPlugin extends Plugin
 	@Override
 	protected void shutDown()
 	{
-		if (config.enableUI())
-		{
-			clientToolbar.removeNavigation(navButton);
-		}
-		
+		clientToolbar.removeNavigation(navButton);
+
 		// Ensure all pending data is saved before shutdown
 		if (hasUnclaimedLoot && !currentRiskedLoot.isEmpty())
 		{
 			log.info("Saving pending risked loot data on shutdown");
 			handleLostRiskedLoot();
 		}
-		
+
 		// Force save all statistics to config
 		configManager.setConfiguration("doomlootlost", "doomDeaths", doomDeaths);
 		configManager.setConfiguration("doomlootlost", "lootLostToDeaths", lootLostToDeaths);
 		configManager.setConfiguration("doomlootlost", "totalLootValueLost", totalLootValueLost);
-		
-		log.info("Plugin shutdown complete - Final stats: Deaths: {}, Lost loot: {}, Value lost: {}", 
+
+		log.info("Plugin shutdown complete - Final stats: Deaths: {}, Lost loot: {}, Value lost: {}",
 			doomDeaths, lootLostToDeaths, totalLootValueLost);
-		
+
 		writer.setName(null);
 	}
 
@@ -239,17 +218,17 @@ public class DoomLootLostPlugin extends Plugin
 			{
 				handleLostRiskedLoot();
 			}
-			
+
 			// Check if Doom of Mokhaiotl NPC is nearby, if we're in combat with it, or if we're in the instance
 			boolean nearDoom = isDoomBossNearby();
 			boolean inCombat = isInCombatWithDoomBoss();
-			
+
 			if (nearDoom || inCombat || inDoomInstance)
 			{
 				doomDeaths++;
 				configManager.setConfiguration("doomlootlost", "doomDeaths", doomDeaths);
 				log.info("Player died to Doom of Mokhaiotl! Total deaths: {}", doomDeaths);
-				
+
 				// Update UI if enabled
 				if (config.enableUI())
 				{
@@ -263,46 +242,43 @@ public class DoomLootLostPlugin extends Plugin
 	public void onGameTick(final GameTick event)
 	{
 		// Enhanced Doom boss instance detection
-		if (client.getLocalPlayer() != null)
+		if (client.getLocalPlayer() == null)
 		{
-			boolean previousState = inDoomInstance;
-			boolean bossCurrentlyNearby = isDoomBossNearby();
-			
-			// If we see the boss, mark that we've seen it and update the time
-			if (bossCurrentlyNearby)
+			return;
+		}
+
+		// If we see the boss, mark that we've seen it and update the time
+		if (isDoomBossNearby())
+		{
+			// Reset loot claimed flag when we see the boss (new encounter)
+			lootClaimed = false;
+			log.debug("Boss seen - resetting loot claimed flag");
+
+			everSeenDoomBoss = true;
+			lastBossSeenTime = System.currentTimeMillis();
+			inDoomInstance = true;
+		}
+		// If we've seen the boss before but can't see it now, stay in instance mode for a while
+		else if (everSeenDoomBoss)
+		{
+			long timeSinceLastSeen = System.currentTimeMillis() - lastBossSeenTime;
+			if (timeSinceLastSeen < INSTANCE_TIMEOUT)
 			{
-				// Reset loot claimed flag when we see the boss (new encounter)
-				lootClaimed = false;
-				log.debug("Boss seen - resetting loot claimed flag");
-				
-				everSeenDoomBoss = true;
-				lastBossSeenTime = System.currentTimeMillis();
+				// Still consider ourselves in the instance for a few minutes after boss disappears
 				inDoomInstance = true;
-			}
-			// If we've seen the boss before but can't see it now, stay in instance mode for a while
-			else if (everSeenDoomBoss)
-			{
-				long timeSinceLastSeen = System.currentTimeMillis() - lastBossSeenTime;
-				if (timeSinceLastSeen < INSTANCE_TIMEOUT)
-				{
-					// Still consider ourselves in the instance for a few minutes after boss disappears
-					inDoomInstance = true;
-				}
-				else
-				{
-					// Been too long, probably left the instance
-					inDoomInstance = false;
-					everSeenDoomBoss = false;
-					clearCurrentRiskedLoot(); // Clear any pending loot when leaving
-				}
 			}
 			else
 			{
-				// Never seen the boss, not in instance
+				// Been too long, probably left the instance
 				inDoomInstance = false;
+				everSeenDoomBoss = false;
+				clearCurrentRiskedLoot(); // Clear any pending loot when leaving
 			}
-			
-
+		}
+		else
+		{
+			// Never seen the boss, not in instance
+			inDoomInstance = false;
 		}
 	}
 
@@ -315,60 +291,39 @@ public class DoomLootLostPlugin extends Plugin
 		}
 
 		final String message = event.getMessage();
-		
+
 		// Check for wave completion messages
 		final Matcher waveCompleteMatcher = WAVE_COMPLETE_PATTERN.matcher(message);
 		if (waveCompleteMatcher.find() && inDoomInstance)
 		{
-			final int wave = Integer.parseInt(waveCompleteMatcher.group(1));
-			currentWave = wave;
+			currentWave = Integer.parseInt(waveCompleteMatcher.group(1));
 		}
-		
+
 		// Check for loot choice messages
 		final Matcher lootChoiceMatcher = LOOT_CHOICE_PATTERN.matcher(message);
 		if (lootChoiceMatcher.find() && inDoomInstance)
 		{
 			log.info("Loot choice detected: {}", lootChoiceMatcher.group(1));
 		}
-		
+
 		// Check for death messages
 		final Matcher deathMatcher = DEATH_PATTERN.matcher(message);
 		if (deathMatcher.find())
 		{
 			final String killerName = deathMatcher.group(1);
 			log.info("Death message detected! Killed by: {}", killerName);
-			
+
 			// Check if killed by Doom of Mokhaiotl
 			if (killerName.equalsIgnoreCase(DOOM_BOSS_NAME))
 			{
 				doomDeaths++;
 				configManager.setConfiguration("doomlootlost", "doomDeaths", doomDeaths);
 				log.info("Player died to Doom of Mokhaiotl! Total deaths: {}", doomDeaths);
-				
+
 				// Update UI if enabled
 				if (config.enableUI())
 				{
 					SwingUtilities.invokeLater(() -> panel.updateDeathCount());
-				}
-			}
-		}
-		
-		// Check for kill count messages
-		final Matcher matcher = KILL_COUNT_PATTERN.matcher(message);
-		if (matcher.find())
-		{
-			final String bossName = matcher.group(1);
-			if (bossName.equalsIgnoreCase(DOOM_BOSS_NAME))
-			{
-				final String countStr = matcher.group(2);
-				try
-				{
-					final int count = NUMBER_FORMATTER.parse(countStr).intValue();
-					killCountMap.put(bossName.toLowerCase(), count);
-				}
-				catch (ParseException e)
-				{
-					log.warn("Failed to parse kill count: {}", countStr);
 				}
 			}
 		}
@@ -380,12 +335,12 @@ public class DoomLootLostPlugin extends Plugin
 		if (event.getGameState() == GameState.LOGGED_IN)
 		{
 			updateWriterUsername();
-			
+
 			// Load data when client logs in (in case it wasn't loaded during startup)
 			if (riskedLootHistory.isEmpty())
 			{
 				loadHistoricalRiskedLootData();
-				
+
 				// Refresh UI if it exists
 				if (panel != null && config.enableUI())
 				{
@@ -409,13 +364,6 @@ public class DoomLootLostPlugin extends Plugin
 			return;
 		}
 
-		// Migrate from deprecated login name to account hash
-		String name = client.getUsername();
-		if (name != null && name.length() > 0 && client.getAccountHash() != -1)
-		{
-			writer.renameUsernameFolderToAccountHash(name.toLowerCase(), client.getAccountHash());
-		}
-
 		if (writer.setPlayerUsername(folder))
 		{
 			localPlayerNameChanged();
@@ -431,59 +379,29 @@ public class DoomLootLostPlugin extends Plugin
 		}
 	}
 
-	private int getKillCount(final String name)
-	{
-		return killCountMap.getOrDefault(name.toLowerCase(), 0);
-	}
-
-	// Removed convertToLTItemEntries method - no longer needed since we're not tracking general loot
-
 	private LTItemEntry createLTItemEntry(final int id, final int qty)
 	{
 		final ItemComposition c = itemManager.getItemComposition(id);
 		final int realId = c.getNote() == -1 ? c.getId() : c.getLinkedNoteId();
 		final int price = itemManager.getItemPrice(realId);
-		
+
 		// Handle unknown items with a fallback name
 		String itemName = c.getName();
 		if (itemName == null || itemName.equals("null") || itemName.trim().isEmpty())
 		{
 			itemName = "Unknown Item (ID: " + id + ")";
 		}
-		
+
 		return new LTItemEntry(itemName, id, qty, price);
 	}
 
-	// Removed general loot record tracking - only tracking lost loot now
-
-	// Removed historical data tracking - only tracking lost loot now
-	public Collection<LTRecord> getHistoricalData(final String name)
-	{
-		// Return empty collection since we're not tracking general loot anymore
-		return new ArrayList<>();
-	}
-
-	public int getDoomDeaths()
-	{
-		return doomDeaths;
-	}
-	
-	// Removed session deaths tracking - only tracking total deaths now
-	
-	// Removed combineRecords method - no longer needed since we're not tracking general loot
-
-	public boolean isInDoomInstance()
-	{
-		return inDoomInstance;
-	}
-	
 	private boolean isDoomBossNearby()
 	{
 		if (client.getLocalPlayer() == null)
 		{
 			return false;
 		}
-		
+
 		// Check all NPCs in the area for Doom of Mokhaiotl
 		for (net.runelite.api.NPC npc : client.getNpcs())
 		{
@@ -494,17 +412,17 @@ public class DoomLootLostPlugin extends Plugin
 				return distance <= 50;
 			}
 		}
-		
+
 		return false;
 	}
-	
+
 	private boolean isInCombatWithDoomBoss()
 	{
 		if (client.getLocalPlayer() == null)
 		{
 			return false;
 		}
-		
+
 		// Check if player is in combat
 		if (client.getLocalPlayer().getInteracting() != null)
 		{
@@ -518,7 +436,7 @@ public class DoomLootLostPlugin extends Plugin
 				}
 			}
 		}
-		
+
 		return false;
 	}
 
@@ -536,10 +454,10 @@ public class DoomLootLostPlugin extends Plugin
 				log.debug("Ignoring widget load - loot already claimed");
 				return;
 			}
-			
+
 			// Scan for Doom loot items
 			clientThread.invokeLater(() -> scanDoomLootOnly());
-			
+
 			// Set flag that loot is available
 			hasUnclaimedLoot = true;
 			currentWave = 1;
@@ -555,10 +473,10 @@ public class DoomLootLostPlugin extends Plugin
 		{
 			return;
 		}
-		
+
 		String option = event.getMenuOption().toLowerCase();
 		String target = event.getMenuTarget().toLowerCase();
-				
+
 		if (option.contains("claim") || target.contains("claim"))
 		{
 			handleLootClaimed();
@@ -569,38 +487,33 @@ public class DoomLootLostPlugin extends Plugin
 		}
 	}
 
-
-
-
-
 	private void updateCurrentRiskedLoot(List<LTItemEntry> newLoot)
 	{
 		currentRiskedLoot.clear();
 		currentRiskedLoot.addAll(newLoot);
-		
+
 		riskedLootValue = currentRiskedLoot.stream()
 			.mapToLong(item -> (long) item.getPrice() * item.getQuantity())
 			.sum();
-		
+
 		hasUnclaimedLoot = !currentRiskedLoot.isEmpty();
-		totalRiskedLoots++;
-		
+
 		log.info("Updated risked loot: {} items worth {} GP", currentRiskedLoot.size(), riskedLootValue);
-		
+
 		// Update UI if enabled
 		if (config.enableUI())
 		{
-			SwingUtilities.invokeLater(() -> panel.updateRiskedLoot(currentRiskedLoot, riskedLootValue));
+			SwingUtilities.invokeLater(panel::showMainView);
 		}
 	}
 
 		private void handleLootClaimed()
 	{
 		log.info("Player claimed loot: {} items worth {} GP", currentRiskedLoot.size(), riskedLootValue);
-		
+
 		// Set loot claimed flag - won't track new loot until we see the boss again
 		lootClaimed = true;
-		
+
 		// Record this as successfully claimed loot
 		if (!currentRiskedLoot.isEmpty())
 		{
@@ -612,19 +525,19 @@ public class DoomLootLostPlugin extends Plugin
 				false // not lost
 			);
 			riskedLootHistory.add(record);
-			
+
 			// Save to storage
 			writer.addRiskedLootRecord(record);
 		}
-		
+
 		clearCurrentRiskedLoot();
 	}
 
 	private void handleLootRisked()
 	{
-		log.info("Player risked loot: {} items worth {} GP for wave {}", 
+		log.info("Player risked loot: {} items worth {} GP for wave {}",
 			currentRiskedLoot.size(), riskedLootValue, currentWave + 1);
-		
+
 		// Loot remains in currentRiskedLoot for potential loss tracking
 		currentWave++;
 	}
@@ -640,20 +553,20 @@ public class DoomLootLostPlugin extends Plugin
 			true // lost to death
 		);
 		riskedLootHistory.add(lostRecord);
-		
+
 		// Save to storage
 		writer.addRiskedLootRecord(lostRecord);
-		
+
 		// Update statistics
 		lootLostToDeaths++;
 		totalLootValueLost += riskedLootValue;
-		
+
 		// Save to config for persistence
 		configManager.setConfiguration("doomlootlost", "lootLostToDeaths", lootLostToDeaths);
 		configManager.setConfiguration("doomlootlost", "totalLootValueLost", totalLootValueLost);
-		
+
 		clearCurrentRiskedLoot();
-		
+
 		// Update UI
 		if (config.enableUI())
 		{
@@ -667,59 +580,29 @@ public class DoomLootLostPlugin extends Plugin
 		hasUnclaimedLoot = false;
 		riskedLootValue = 0L;
 		currentWave = 0;
-		
+
 		// Update UI
 		if (config.enableUI())
 		{
-			SwingUtilities.invokeLater(() -> panel.clearRiskedLoot());
+			SwingUtilities.invokeLater(panel::showMainView);
 		}
 	}
 
 	// ========== GETTER METHODS FOR UI ==========
-	
-	public List<LTItemEntry> getCurrentRiskedLoot()
-	{
-		return new ArrayList<>(currentRiskedLoot);
-	}
-	
-	public long getRiskedLootValue()
-	{
-		return riskedLootValue;
-	}
-	
-	public boolean hasUnclaimedLoot()
-	{
-		return hasUnclaimedLoot;
-	}
-	
-	public int getCurrentWave()
-	{
-		return currentWave;
-	}
-	
+
 	public List<RiskedLootRecord> getRiskedLootHistory()
 	{
 		return new ArrayList<>(riskedLootHistory);
 	}
-	
-	public int getLootLostToDeaths()
-	{
-		return lootLostToDeaths;
-	}
-	
-	public long getTotalLootValueLost()
-	{
-		return totalLootValueLost;
-	}
-	
+
 	private void loadHistoricalRiskedLootData()
 	{
 		try
 		{
 			Collection<RiskedLootRecord> historicalRecords = writer.loadRiskedLootRecords();
-			
+
 			riskedLootHistory.clear();
-			
+
 			// Validate and filter records
 			for (RiskedLootRecord record : historicalRecords)
 			{
@@ -732,13 +615,13 @@ public class DoomLootLostPlugin extends Plugin
 					log.warn("Skipping invalid risked loot record: {}", record);
 				}
 			}
-			
+
 			log.info("Loaded {} valid historical risked loot records", riskedLootHistory.size());
-			
+
 			// Recalculate statistics from loaded data
 			long recalculatedValueLost = 0L;
 			int recalculatedLostCount = 0;
-			
+
 			for (RiskedLootRecord record : riskedLootHistory)
 			{
 				if (record.isWasLost())
@@ -747,16 +630,16 @@ public class DoomLootLostPlugin extends Plugin
 					recalculatedLostCount++;
 				}
 			}
-			
+
 			// Update statistics if they don't match (config might be out of sync)
 			if (recalculatedValueLost != totalLootValueLost || recalculatedLostCount != lootLostToDeaths)
 			{
-				log.info("Statistics mismatch detected - Recalculated: {} lost, {} value vs Config: {} lost, {} value", 
+				log.info("Statistics mismatch detected - Recalculated: {} lost, {} value vs Config: {} lost, {} value",
 					recalculatedLostCount, recalculatedValueLost, lootLostToDeaths, totalLootValueLost);
-				
+
 				totalLootValueLost = recalculatedValueLost;
 				lootLostToDeaths = recalculatedLostCount;
-				
+
 				// Update config to match
 				configManager.setConfiguration("doomlootlost", "lootLostToDeaths", lootLostToDeaths);
 				configManager.setConfiguration("doomlootlost", "totalLootValueLost", totalLootValueLost);
@@ -767,29 +650,29 @@ public class DoomLootLostPlugin extends Plugin
 			log.warn("Failed to load historical risked loot data", e);
 		}
 	}
-	
+
 	private boolean isValidRiskedLootRecord(RiskedLootRecord record)
 	{
 		if (record == null)
 		{
 			return false;
 		}
-		
+
 		if (record.getItems() == null || record.getItems().isEmpty())
 		{
 			return false;
 		}
-		
+
 		if (record.getTimestamp() == null)
 		{
 			return false;
 		}
-		
+
 		if (record.getWave() <= 0)
 		{
 			return false;
 		}
-		
+
 		// Validate each item in the record
 		for (LTItemEntry item : record.getItems())
 		{
@@ -797,22 +680,22 @@ public class DoomLootLostPlugin extends Plugin
 			{
 				return false;
 			}
-			
+
 			if (item.getId() <= 0 || item.getQuantity() <= 0)
 			{
 				return false;
 			}
 		}
-		
+
 		return true;
 	}
-	
 
-	
+
+
 	private void scanDoomLootOnly()
 	{
 		List<LTItemEntry> doomLoot = new ArrayList<>();
-		
+
 		// Scan all components of widget 919 to find the loot
 		for (int componentId = 0; componentId < 50; componentId++)
 		{
@@ -825,23 +708,23 @@ public class DoomLootLostPlugin extends Plugin
 					int itemId = widget.getItemId();
 					int quantity = widget.getItemQuantity();
 					if (quantity <= 0) quantity = 1;
-					
+
 					// Skip unknown items like ID 6512
 					if (itemId == 6512) {
 						continue;
 					}
-					
+
 					// Check if we already found this item (avoid duplicates)
 					boolean alreadyFound = doomLoot.stream()
 						.anyMatch(item -> item.getId() == itemId);
-					
+
 					if (!alreadyFound)
 					{
 						LTItemEntry item = createLTItemEntry(itemId, quantity);
 						doomLoot.add(item);
 					}
 				}
-				
+
 				// Also check children for items
 				if (widget.getChildren() != null && widget.getChildren().length > 0)
 				{
@@ -852,16 +735,16 @@ public class DoomLootLostPlugin extends Plugin
 							int itemId = child.getItemId();
 							int quantity = child.getItemQuantity();
 							if (quantity <= 0) quantity = 1;
-							
+
 							// Skip unknown items like ID 6512
 							if (itemId == 6512) {
 								continue;
 							}
-							
+
 							// Check if we already found this item (avoid duplicates)
 							boolean alreadyFound = doomLoot.stream()
 								.anyMatch(item -> item.getId() == itemId);
-							
+
 							if (!alreadyFound)
 							{
 								LTItemEntry item = createLTItemEntry(itemId, quantity);
@@ -872,12 +755,12 @@ public class DoomLootLostPlugin extends Plugin
 				}
 			}
 		}
-		
+
 		if (!doomLoot.isEmpty())
 		{
 			updateCurrentRiskedLoot(doomLoot);
 		}
 	}
-	
+
 
 }

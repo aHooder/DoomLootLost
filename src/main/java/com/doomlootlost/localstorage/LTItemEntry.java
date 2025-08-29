@@ -37,9 +37,4 @@ public class LTItemEntry
     public int id;
     public int quantity;
     public long price;
-
-    public long getTotal()
-    {
-        return this.quantity * this.price;
-    }
 }

@@ -24,52 +24,25 @@
  */
 package com.doomlootlost.ui;
 
+import com.doomlootlost.DoomLootLostPlugin;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-import java.awt.image.BufferedImage;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import javax.swing.ImageIcon;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
-import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
-import javax.swing.border.MatteBorder;
-import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.PluginPanel;
-import net.runelite.client.util.ImageUtil;
-import com.doomlootlost.DoomLootLostPlugin;
-import com.doomlootlost.localstorage.LTItemEntry;
 
 @Slf4j
 public class LootLoggerPanel extends PluginPanel
 {
-    private static final BufferedImage ICON_DELETE;
-    private static final BufferedImage ICON_REFRESH;
-    private static final BufferedImage ICON_BACK;
-    private static final BufferedImage ICON_REPLAY;
-
-    private final static Color BACKGROUND_COLOR = ColorScheme.DARK_GRAY_COLOR;
-    private final static Color BUTTON_HOVER_COLOR = ColorScheme.DARKER_GRAY_HOVER_COLOR;
-
-    static
-    {
-        // Use null to avoid startup errors - we can add icons later
-        ICON_DELETE = null;
-        ICON_REFRESH = null;
-        ICON_BACK = null;
-        ICON_REPLAY = null;
-    }
-
     private final ItemManager itemManager;
     private final DoomLootLostPlugin plugin;
 
@@ -196,58 +169,6 @@ public class LootLoggerPanel extends PluginPanel
         this.repaint();
     }
 
-    private JPanel createButton(String text, String tooltip)
-    {
-        JPanel button = new JPanel();
-        button.setLayout(new BorderLayout());
-        button.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-        button.setBorder(new CompoundBorder(
-            new MatteBorder(1, 1, 1, 1, ColorScheme.DARK_GRAY_COLOR),
-            new EmptyBorder(10, 10, 10, 10)
-        ));
-        button.setPreferredSize(new Dimension(200, 40));
-        
-        JLabel label = new JLabel(text);
-        label.setForeground(Color.WHITE);
-        label.setHorizontalAlignment(JLabel.CENTER);
-        button.add(label, BorderLayout.CENTER);
-        
-        button.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseEntered(MouseEvent e) {
-                button.setBackground(BUTTON_HOVER_COLOR);
-            }
-            
-            @Override
-            public void mouseExited(MouseEvent e) {
-                button.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-            }
-        });
-        
-        return button;
-    }
-
-    // Removed session and history views - only tracking lost loot and deaths now
-
-    // Removed showLootView method - no longer needed since we're not tracking general loot
-
-    // Removed createLootRecordPanel method - no longer needed since we're not tracking general loot
-
-    private String formatPrice(long price)
-    {
-        if (price >= 1000000) {
-            return String.format("%.1fM", price / 1000000.0);
-        } else if (price >= 1000) {
-            return String.format("%.1fK", price / 1000.0);
-        } else {
-            return String.valueOf(price);
-        }
-    }
-
-    // Removed createEmptyLootRecordPanel method - no longer needed since we're not tracking general loot
-
-    // Removed showErrorView and addLog methods - no longer needed since we're not tracking general loot
-    
     public void updateDeathCount()
     {
         if (deathLabel != null && plugin != null)
@@ -259,8 +180,6 @@ public class LootLoggerPanel extends PluginPanel
         }
     }
 
-    // Removed createLostLootStatsPanel method - no longer needed with new UI design
-    
     private String formatGoldValue(long value)
     {
         if (value >= 1_000_000)
@@ -277,34 +196,7 @@ public class LootLoggerPanel extends PluginPanel
         }
     }
     
-
-
-    
-    // Removed createEmptyLostLootPanel method - no longer needed with new UI design
-    
-    // Removed createAggregatedLostLootPanel method - no longer needed with new UI design
-
-    // Removed createExpandedLostLootRecordPanel method - no longer needed with new UI design
-
     // ========== RISKED LOOT UI METHODS ==========
-
-    public void updateRiskedLoot(List<LTItemEntry> riskedLoot, long value)
-    {
-        // Refresh the main view to show updated information
-        SwingUtilities.invokeLater(() -> {
-            showMainView();
-        });
-    }
-
-    public void clearRiskedLoot()
-    {
-        log.info("Clearing risked loot display");
-        
-        // Refresh the main view
-        SwingUtilities.invokeLater(() -> {
-            showMainView();
-        });
-    }
 
     public void updateLossStatistics()
     {
@@ -319,9 +211,7 @@ public class LootLoggerPanel extends PluginPanel
         }
         
         // Refresh the current view to show updated loss statistics
-        SwingUtilities.invokeLater(() -> {
-            showMainView(); // Always refresh to main view to show updated stats
-        });
+		SwingUtilities.invokeLater(this::showMainView);
     }
 
     private JPanel createEmptyGridPanel()
@@ -427,8 +317,8 @@ public class LootLoggerPanel extends PluginPanel
         final int quantity = item.getQuantity();
         final long price = item.getPrice();
 
-        return "<html>" + name + " x " + quantity
-            + "<br/>Price: " + formatGoldValue(price)
-            + "<br/>Total: " + formatGoldValue(quantity * price) + "</html>";
+        return name + " x " + quantity + "\n"
+            + "Price: " + formatGoldValue(price) + "\n"
+            + "Total: " + formatGoldValue(quantity * price);
     }
 }
